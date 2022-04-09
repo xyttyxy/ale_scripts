@@ -4,7 +4,7 @@ from collections import deque
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.quaternions import Quaternions
 from ase.db import connect
-from ase import Atoms
+from ase import Atoms, units
 import numpy as np 
 from ase.parallel import paropen
 from ase.utils import basestring
@@ -337,7 +337,7 @@ def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=-1, order=True, atomso
 
             at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True)
             if 'vx' in columns:
-                vel = data[['vx','vy','vz']].to_numpy(float)
+                vel = data[['vx','vy','vz']].to_numpy(float) / units.fs
                 # breakpoint()
                 at.set_velocities(vel)
             atoms_view.append(at)
