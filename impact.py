@@ -9,6 +9,7 @@ from ase import Atoms, Atom
 from ase.db import connect
 from ase.io import read, write
 from ase.neighborlist import build_neighbor_list
+from fast_lammpsdump import read_dump
 from pymatgen.io.lammps.outputs import LammpsDump, parse_lammps_dumps, parse_lammps_log
 import matplotlib.pyplot as plt
 
