@@ -1,4 +1,5 @@
 import os
+import mmap
 import numpy as np
 import pandas as pd
 from PIL import Image
@@ -460,22 +461,24 @@ def get_spike_range(atomss=None, temp=353):
         integrated = b*4*np.pi * (np.sqrt(np.pi)*special.erfc(np.sqrt(a)*v_mps)/(4*a**(3/2)) + v_mps*np.exp(-a*v_mps**2/(2*a)))
 
         return non_integrated, integrated # nondimensional
-
-    # determine cutoff velocity
-    m_d = 63.54
-    T = temp
-    v_rms = v_mps(m_d, T)
-    vs = np.linspace(v_rms, v_rms*10, 100)
-    _, integrated = int_mb(m_d, vs, T)
-    # import matplotlib.pyplot as plt
-    # plt.plot(vs, integrated)
-    # plt.show()
-    # exit()
-    # probablity of such hot atoms arising in thermal
-    # motion is 0.00001, very unlikely given our number
-    # of atoms (4000)
-    v_cut = vs[integrated < 1e-5][0] * 1e10/1e15
-
+    
+    def v_cutoff(m_d, T):
+        # determine cutoff velocity
+        v_rms = v_mps(m_d, T)
+        vs = np.linspace(v_rms, v_rms*10, 100)
+        _, integrated = int_mb(m_d, vs, T)
+        # import matplotlib.pyplot as plt
+        # plt.plot(vs, integrated)
+        # plt.show()
+        # exit()
+        # probablity of such hot atoms arising in thermal
+        # motion is 0.00001, very unlikely given our number
+        # of atoms (4000)
+        v_cut = vs[integrated < 1e-5][0] * 1e10/1e15
+        return v_cut
+    
+    v_cut_cu = v_cutoff(63.54, T=temp)
+    v_cut_o  = v_cutoff(16, T=temp)
     # determine impact site
     impact_site, impact_idx, atom_idx = find_impact_site(atomss)
     hot_list = np.array([atom_idx], dtype=int) # initial hot cu atom
@@ -491,7 +494,9 @@ def get_spike_range(atomss=None, temp=353):
         # existing hot atoms
 
         # current list
-        hot_mask = (vel_normed > v_cut) & (np.array(atoms.get_chemical_symbols()) == 'Cu')
+        hot_mask_cu = (vel_normed > v_cut_cu) & (np.array(atoms.get_chemical_symbols()) == 'Cu')
+        hot_mask_o = (vel_normed > v_cut_o) & (np.array(atoms.get_chemical_symbols()) == 'O')
+        hot_mask = hot_mask_cu | hot_mask_o
         hot_list_now = np.where(hot_mask)[0]
         max_change = 2.7 # > bond length
 
@@ -541,3 +546,59 @@ def get_spike_range(atomss=None, temp=353):
         if new_deep > deep:
             deep = new_deep
     return dist, deep, atoms_hot[hot_list]
+
+
+def get_dump_image_indices(filename, penetration=False):
+    """ Finds the starting byte indices of each image in a lammpsdump file """
+    byte_indices = np.empty(3, dtype=np.uint64)
+    if not penetration:
+        i = int(filename.split('.')[1])
+        infile = 'dump.{:}.high_freq'.format(i)
+        outfile = 'dump.{:}.byteidx'.format(i)
+    else:
+        infile = filename
+        outfile = 'dump.byteidx'
+        
+    with open(infile, 'r+') as dumpfile:
+        m = mmap.mmap(dumpfile.fileno(), 0)
+        last_byte_idx = 0
+        step = 0
+        while True:
+            byte_idx = m.find(b'ITEM: TIMESTEP', last_byte_idx)
+            if byte_idx == -1:
+                break
+            # point file pointer to matched byte index
+            m.seek(byte_idx)
+
+            # timestep is line after match
+            m.readline()
+            timestep = int(m.readline().rstrip())
+
+            # timestep is line after match
+            m.readline()
+            numatoms = int(m.readline().rstrip())
+
+            step += 1
+
+            # append byte index
+            byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep, numatoms], dtype=np.uint64)))
+            last_byte_idx = byte_idx+1 # to skip last found
+        
+    np.savetxt(outfile, byte_indices[1:, :], fmt='%d')
+
+
+def get_dump_timesteps(filename, dump_freq = 100):
+    i = int(filename.split('.')[1])
+    with open('dump.{:}.high_freq'.format(i), 'r+') as dumpfile:
+        m = mmap.mmap(dumpfile.fileno(), 0)
+        byte_idx = m.find(b'ITEM: TIMESTEP')
+        m.seek(byte_idx)
+        m.readline()
+        init_step = int(m.readline().rstrip())
+
+        byte_idx = m.rfind(b'ITEM: TIMESTEP')
+        m.seek(byte_idx)
+        m.readline()
+        final_step = int(m.readline().rstrip())
+    timesteps = np.arange(init_step, final_step, dump_freq)
+    np.savetxt('dump.{:}.timesteps'.format(i), timesteps, fmt='%d')
