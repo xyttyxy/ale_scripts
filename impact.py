@@ -424,7 +424,7 @@ def find_impact_site(atomss):
             dist = new_dist
 
 
-def get_spike_range(atomss=None, temp=353):
+def get_spike_range(atomss=None, temp=353, prob_cutoff=1e-5):
     """ Calcuates range of heat spikes after impact
 
     Note: range is defined as the distance of atom that is
@@ -474,14 +474,19 @@ def get_spike_range(atomss=None, temp=353):
         # probablity of such hot atoms arising in thermal
         # motion is 0.00001, very unlikely given our number
         # of atoms (4000)
-        v_cut = vs[integrated < 1e-5][0] * 1e10/1e15
+        mps2apfs = 1e10/1e15
+        v_cut = vs[integrated < prob_cutoff][0] * mps2apfs
         return v_cut
     
     v_cut_cu = v_cutoff(63.54, T=temp)
     v_cut_o  = v_cutoff(16, T=temp)
     # determine impact site
-    impact_site, impact_idx, atom_idx = find_impact_site(atomss)
-    hot_list = np.array([atom_idx], dtype=int) # initial hot cu atom
+    try:
+        impact_site, impact_idx, atom_idx = find_impact_site(atomss)
+    except:
+        return -1, -1, -1
+
+    hot_list = np.array([len(atomss[impact_idx])-1, atom_idx], dtype=int) # initial hot cu atom
     # print('hot_list: ', hot_list)
     dist = 0
     deep = 0
@@ -523,6 +528,10 @@ def get_spike_range(atomss=None, temp=353):
         # this should not have duplicate elements
         hot_list = np.concatenate((hot_list,
                                    np.array(new_hot_list, dtype=int)))
+        
+        # check if any atom in this list has drifted past the boundary, remove from the hot list
+        to_delete = [idx for idx, elm in enumerate(hot_list) if atoms[elm].position[2] < 5 and atoms[elm].symbol == 'O']
+        hot_list = np.delete(hot_list, to_delete)
 
         # find the max distance to impact_site
         atoms_hot = atoms + Atom('F', position=impact_site)
