@@ -84,7 +84,7 @@ def get_dump_image_indices(filename):
             byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep], dtype=np.uint64)))
             last_byte_idx = byte_idx+1 # to skip last found
             
-    np.savetxt('dump.{:}.byteidx'.format(i), byte_indices[1:, :], fmt='%d')
+    return byte_indices[1:, :]
 
 
 def get_dump_timesteps(filename, dump_freq = 100):
