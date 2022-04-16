@@ -257,7 +257,7 @@ def get_snap_imgs(steps_ctrs, steps_brkt):
 
 
 def get_thicknesses(steps_ctrs, steps_brkt):
-    """ Wrapper around get_thickness 
+    """ Wrapper around get_thickness used in stitch_runs
     Note: retrieves structures (ase.Atoms) from 2 possibilities
     1. if db file exists, read sql db. This is the fastest. 
     2. if db file does not exist, read dumpfile. Also fast enough.
@@ -273,15 +273,23 @@ def get_thicknesses(steps_ctrs, steps_brkt):
         r = np.where(s >= steps_brkt)[0][-1]+1
         if r == len(steps_brkt):
             r -= 1
-        if os.path.exists('run_{:}.db'.format(r)):
-            atoms = read('run_{:}.db@timestep={:}'.format(r, s))[0]
+            
+        if os.path.exists('dump.{:}.thickness'.format(r)):
+            nparr = np.loadtxt('dump.{:}.thickness'.format(r))
+            t = nparr[np.where(np.arr[0] == s), 1]
+            no = nparr[np.where(np.arr[0] == s), 2]
         else:
-            atoms = read_dump('dump.{:}.high_freq'.format(r), s)
-        if len([a for a in atoms if a.symbol == 'O']) == 0:
-            t = 0
-            no = 0
-        else:
-            t, no = get_thickness(atoms, 3)
+            if os.path.exists('run_{:}.db'.format(r)):
+                atoms = read('run_{:}.db@timestep={:}'.format(r, s))[0]
+            else:
+                atoms = read_dump('dump.{:}.high_freq'.format(r), s)
+                
+            if len([a for a in atoms if a.symbol == 'O']) == 0:
+                t = 0
+                no = 0
+            else:
+                t, no = get_thickness(atoms, 3)
+        
         thicknesses.append(t)
         nos.append(no)
         atomss.append(atoms)
@@ -289,6 +297,37 @@ def get_thicknesses(steps_ctrs, steps_brkt):
     return np.array(thicknesses), np.array(nos)
 
 
+def get_all_thicknesses(filename, byteidx):
+    from tqdm import tqdm
+    
+    thicknesses = np.empty(1)
+    num_o = np.empty(1)
+    
+    for step in tqdm(byteidx[:, 1]):
+        atoms = read_dump(filename, step)
+        t, no = get_thickness(atoms, 3)
+        thicknesses=np.append(thicknesses, t)
+        num_o=np.append(num_o, no)
+
+    return np.vstack((byteidx[:, 1], thicknesses[1:], num_o[1:]))
+    
+
+def get_all_thicknesses_parallel(filename, byteidx):
+    from pqdm.processes import pqdm
+    from tqdm import tqdm
+    from joblib import Parallel, delayed
+    
+    def foo(s):
+        atoms = read_dump(filename, s)
+        t, no = get_thickness(atoms, 3)
+        return t, no
+
+    thickness, num_o = Parallel(n_jobs=4)(delayed(foo)(s) for s in tqdm(byteidx[:, 1]))
+    #thickness, num_o = pqdm(byteidx[:, 1], foo, n_jobs=4)
+    breakpoint()
+    return np.vstack((byteidx[:, 1], thickness[1:], num_o[1:]))
+
+        
 def get_thickness(atoms, method=1, debug=False, raw_coords=False):
     """ Calculates the thickness of the oxide
 
