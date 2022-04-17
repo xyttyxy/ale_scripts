@@ -1,5 +1,7 @@
 from pymatgen.io.lammps.outputs import parse_lammps_dumps, LammpsDump
 import mmap
+import multiprocessing as mp
+import os
 from collections import deque
 from ase.calculators.singlepoint import SinglePointCalculator
 from ase.quaternions import Quaternions
@@ -60,33 +62,6 @@ def dump2db_func(i, impact_type='O', z_filt=False):
             i += 1
 
 
-def get_dump_image_indices(filename):
-    """ Finds the starting byte indices of each image in a lammpsdump file """
-    i = int(filename.split('.')[1])
-    byte_indices = np.empty(2, dtype=np.uint64)
-    with open('dump.{:}.high_freq'.format(i), 'r+') as dumpfile:
-        m = mmap.mmap(dumpfile.fileno(), 0)
-        last_byte_idx = 0
-        step = 0
-        while True:
-            byte_idx = m.find(b'ITEM: TIMESTEP', last_byte_idx)
-            if byte_idx == -1:
-                break
-            # point file pointer to matched byte index
-            m.seek(byte_idx)
-
-            # timestep is line after match
-            m.readline()
-            timestep = int(m.readline().rstrip())
-            step += 1
-
-            # append byte index
-            byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep], dtype=np.uint64)))
-            last_byte_idx = byte_idx+1 # to skip last found
-            
-    return byte_indices[1:, :]
-
-
 def get_dump_timesteps(filename, dump_freq = 100):
     """ Get time steps in a dump file. Reads 1st, last, interpolate between """
     i = int(filename.split('.')[1])
@@ -104,6 +79,91 @@ def get_dump_timesteps(filename, dump_freq = 100):
     timesteps = np.arange(init_step, final_step, dump_freq)
     np.savetxt('dump.{:}.timesteps'.format(i), timesteps, fmt='%d')
 
+
+def get_dump_image_indices_segment(filename, chunk_start, chunk_end):
+    with open(filename) as dumpfile:
+        m = mmap.mmap(dumpfile.fileno(), 0, access=mmap.ACCESS_READ)
+        last_byte_idx = chunk_start
+        byte_indices = np.empty(3, dtype=np.uint64)
+        while True:
+            byte_idx = m.find(b'ITEM: TIMESTEP', last_byte_idx, chunk_end)
+            if byte_idx == -1:
+                break
+            # point file pointer to matched byte index
+            m.seek(byte_idx)
+
+            # timestep is line after match
+            m.readline()
+            timestep = int(m.readline().rstrip())
+
+            # timestep is line after match
+            m.readline()
+            numatoms = int(m.readline().rstrip())
+
+            # append byte index
+            byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep, numatoms], dtype=np.uint64)))
+            last_byte_idx = byte_idx+1 # to skip last found
+            
+        return byte_indices[1:]
+
+
+def get_dump_image_indices(filename, penetration=False):
+    """ Finds the starting byte indices of each image in a lammpsdump file """
+    
+    if not penetration:
+        i = int(filename.split('.')[1])
+        infile = 'dump.{:}.high_freq'.format(i)
+        outfile = 'dump.{:}.byteidx'.format(i)
+    else:
+        infile = filename
+        outfile = 'dump.byteidx'
+
+    file_size = os.path.getsize(filename)
+    cpu_count = os.cpu_count()
+    chunk_size = file_size // cpu_count
+
+    chunk_args = []
+    with open(infile) as dumpfile:
+        def is_start_of_line(position):
+            if position == 0:
+                return True
+            # Check whether the previous character is EOL
+            dumpfile.seek(position - 1)
+            return dumpfile.read(1) == '\n'
+
+        def get_next_line_position(position):
+            # Read the current line till the end
+            dumpfile.seek(position)
+            dumpfile.readline()
+            # Return a position after reading the line
+            return dumpfile.tell()
+
+        chunk_start = 0
+        while chunk_start < file_size:
+            chunk_end = min(file_size, chunk_start+chunk_size)
+            
+            while not is_start_of_line(chunk_end):
+                chunk_end -= 1
+                
+            if chunk_start == chunk_end:
+                chunk_end = get_next_line_position(chunk_end)
+
+            # Save `process_chunk` arguments
+            args = (filename, chunk_start, chunk_end)
+            chunk_args.append(args)
+
+            # Move to the next chunk
+            chunk_start = chunk_end
+    ca = chunk_args[-1]
+    get_dump_image_indices_segment(ca[0], ca[1], ca[2])
+    with mp.Pool(cpu_count) as p:
+        chunk_results = p.starmap(get_dump_image_indices_segment, chunk_args)
+        byte_indices = np.concatenate([c for c in chunk_results if c.ndim == 2])
+        # parallization will not work on I/O limited stuff, so this is useless:
+        # Parallel(n_jobs=32)(delayed(foo)(c) for c in tqdm(range(ncore)))
+
+    return byte_indices
+    # np.savetxt(outfile, byte_indices[1:, :], fmt='%d')        
 
 def read_dump(filename, find_step):
     """ random-access to structures in huge lammpsdump using mmap """

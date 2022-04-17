@@ -322,10 +322,8 @@ def get_all_thicknesses_parallel(filename, byteidx):
         t, no = get_thickness(atoms, 3)
         return t, no
 
-    thickness, num_o = Parallel(n_jobs=4)(delayed(foo)(s) for s in tqdm(byteidx[:, 1]))
-    #thickness, num_o = pqdm(byteidx[:, 1], foo, n_jobs=4)
-    breakpoint()
-    return np.vstack((byteidx[:, 1], thickness[1:], num_o[1:]))
+    thickness, num_o = zip(*Parallel(n_jobs=32)(delayed(foo)(s) for s in tqdm(byteidx[:, 1])))
+    return np.vstack((byteidx[0:100, 1], thickness, num_o))
 
         
 def get_thickness(atoms, method=1, debug=False, raw_coords=False):
@@ -594,59 +592,3 @@ def get_spike_range(atomss=None, temp=353, prob_cutoff=1e-5):
         if new_deep > deep:
             deep = new_deep
     return dist, deep, atoms_hot[hot_list]
-
-
-def get_dump_image_indices(filename, penetration=False):
-    """ Finds the starting byte indices of each image in a lammpsdump file """
-    byte_indices = np.empty(3, dtype=np.uint64)
-    if not penetration:
-        i = int(filename.split('.')[1])
-        infile = 'dump.{:}.high_freq'.format(i)
-        outfile = 'dump.{:}.byteidx'.format(i)
-    else:
-        infile = filename
-        outfile = 'dump.byteidx'
-        
-    with open(infile, 'r+') as dumpfile:
-        m = mmap.mmap(dumpfile.fileno(), 0)
-        last_byte_idx = 0
-        step = 0
-        while True:
-            byte_idx = m.find(b'ITEM: TIMESTEP', last_byte_idx)
-            if byte_idx == -1:
-                break
-            # point file pointer to matched byte index
-            m.seek(byte_idx)
-
-            # timestep is line after match
-            m.readline()
-            timestep = int(m.readline().rstrip())
-
-            # timestep is line after match
-            m.readline()
-            numatoms = int(m.readline().rstrip())
-
-            step += 1
-
-            # append byte index
-            byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep, numatoms], dtype=np.uint64)))
-            last_byte_idx = byte_idx+1 # to skip last found
-        
-    np.savetxt(outfile, byte_indices[1:, :], fmt='%d')
-
-
-def get_dump_timesteps(filename, dump_freq = 100):
-    i = int(filename.split('.')[1])
-    with open('dump.{:}.high_freq'.format(i), 'r+') as dumpfile:
-        m = mmap.mmap(dumpfile.fileno(), 0)
-        byte_idx = m.find(b'ITEM: TIMESTEP')
-        m.seek(byte_idx)
-        m.readline()
-        init_step = int(m.readline().rstrip())
-
-        byte_idx = m.rfind(b'ITEM: TIMESTEP')
-        m.seek(byte_idx)
-        m.readline()
-        final_step = int(m.readline().rstrip())
-    timesteps = np.arange(init_step, final_step, dump_freq)
-    np.savetxt('dump.{:}.timesteps'.format(i), timesteps, fmt='%d')
