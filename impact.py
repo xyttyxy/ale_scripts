@@ -276,8 +276,9 @@ def get_thicknesses(steps_ctrs, steps_brkt):
             
         if os.path.exists('dump.{:}.thickness'.format(r)):
             nparr = np.loadtxt('dump.{:}.thickness'.format(r))
-            t = nparr[np.where(np.arr[0] == s), 1]
-            no = nparr[np.where(np.arr[0] == s), 2]
+            row = nparr[np.where(nparr[:, 0].astype(np.int) == s)[0][0], :]
+            t = row[1]
+            no = row[2]
         else:
             if os.path.exists('run_{:}.db'.format(r)):
                 atoms = read('run_{:}.db@timestep={:}'.format(r, s))[0]
