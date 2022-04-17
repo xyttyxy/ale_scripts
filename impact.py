@@ -312,7 +312,7 @@ def get_all_thicknesses(filename, byteidx):
     return np.vstack((byteidx[:, 1], thicknesses[1:], num_o[1:]))
     
 
-def get_all_thicknesses_parallel(filename, byteidx):
+def get_all_thicknesses_parallel(filename, byteidx, ncore=None):
     from pqdm.processes import pqdm
     from tqdm import tqdm
     from joblib import Parallel, delayed
@@ -321,9 +321,12 @@ def get_all_thicknesses_parallel(filename, byteidx):
         atoms = read_dump(filename, s)
         t, no = get_thickness(atoms, 3)
         return t, no
-
-    thickness, num_o = zip(*Parallel(n_jobs=32)(delayed(foo)(s) for s in tqdm(byteidx[:, 1])))
-    return np.vstack((byteidx[0:100, 1], thickness, num_o))
+    if ncore:
+        cpus = ncore
+    else:
+        cpus = os.cpu_count()
+    thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(s) for s in tqdm(byteidx[:, 1])))
+    return np.vstack((byteidx[:, 1], thickness, num_o))
 
         
 def get_thickness(atoms, method=1, debug=False, raw_coords=False):
