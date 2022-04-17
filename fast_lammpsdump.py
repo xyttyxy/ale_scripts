@@ -43,7 +43,9 @@ def dump2atoms(a, impact_type, z_filt = False):
 
 def dump2db_func(i, impact_type='O', z_filt=False):
     """converts big lammpsdump file to ase.db
-    Note: lammps file is usually only accessible sequentially.
+    Note: db-based workflow deprecated.
+
+    lammps file is usually only accessible sequentially.
     Converting it to sqlite database allows random access.
     However, the same functionality is achieved using memory-mapped
     files now, so this time-consuming conversion is no longer necessary. """
@@ -63,7 +65,9 @@ def dump2db_func(i, impact_type='O', z_filt=False):
 
 
 def get_dump_timesteps(filename, dump_freq = 100):
-    """ Get time steps in a dump file. Reads 1st, last, interpolate between """
+    """ Get time steps in a dump file. Reads 1st, last, interpolate between
+    Note: db-based workflow deprecated """
+    
     i = int(filename.split('.')[1])
     with open('dump.{:}.high_freq'.format(i), 'r+') as dumpfile:
         m = mmap.mmap(dumpfile.fileno(), 0)
@@ -81,6 +85,7 @@ def get_dump_timesteps(filename, dump_freq = 100):
 
 
 def get_dump_image_indices_segment(filename, chunk_start, chunk_end):
+    """ processor for parallelized byte indexing of dump files """
     with open(filename) as dumpfile:
         m = mmap.mmap(dumpfile.fileno(), 0, access=mmap.ACCESS_READ)
         last_byte_idx = chunk_start
@@ -107,7 +112,7 @@ def get_dump_image_indices_segment(filename, chunk_start, chunk_end):
         return byte_indices[1:]
 
 
-def get_dump_image_indices(filename, penetration=False):
+def get_dump_image_indices(filename, penetration=False, parallel=True):
     """ Finds the starting byte indices of each image in a lammpsdump file """
     
     if not penetration:
@@ -155,12 +160,14 @@ def get_dump_image_indices(filename, penetration=False):
             # Move to the next chunk
             chunk_start = chunk_end
     ca = chunk_args[-1]
-    get_dump_image_indices_segment(ca[0], ca[1], ca[2])
-    with mp.Pool(cpu_count) as p:
-        chunk_results = p.starmap(get_dump_image_indices_segment, chunk_args)
-        byte_indices = np.concatenate([c for c in chunk_results if c.ndim == 2])
-        # parallization will not work on I/O limited stuff, so this is useless:
-        # Parallel(n_jobs=32)(delayed(foo)(c) for c in tqdm(range(ncore)))
+    if parallel:
+        # parallization will not work on I/O limited systems
+        # e.g. using it read files off USB-3.0 HDD w/ ~ 50 Mb/s is pointless
+        with mp.Pool(cpu_count) as p:
+            chunk_results = p.starmap(get_dump_image_indices_segment, chunk_args)
+            byte_indices = np.concatenate([c for c in chunk_results if c.ndim == 2])
+    else:
+        byte_indices = get_dump_image_indices_segment(filename, 0, file_size)
 
     return byte_indices
     # np.savetxt(outfile, byte_indices[1:, :], fmt='%d')        
