@@ -208,7 +208,9 @@ def read_dump(filename, find_step):
         bytes = m.read(diffbyte).decode('utf-8')
         df = LammpsDump.from_string(bytes)
         at = dump2atoms(df, 'O')
-        return at
+        m.close()
+        
+    return at
 
 
 def read_lammps_dump(fileobj, index=-1, order=True, atomsobj=Atoms, atom_types=None, return_all=False):

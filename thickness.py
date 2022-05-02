@@ -1,6 +1,10 @@
 import os
+import gc
 import mmap
 import numpy as np
+import random, string
+import pytim
+import MDAnalysis as mda
 import pandas as pd
 from PIL import Image
 from scipy import special
@@ -72,21 +76,22 @@ def get_all_thicknesses(filename, byteidx):
     return np.vstack((byteidx[:, 1], thicknesses[1:], num_o[1:]))
     
 
-def get_all_thicknesses_parallel(filename, byteidx, ncore=None):
+def get_all_thicknesses_parallel(filename, byteidx, ncore=None, batch=None):
     from pqdm.processes import pqdm
     from tqdm import tqdm
     from joblib import Parallel, delayed
-    
+
     def foo(s):
         atoms = read_dump(filename, s)
-        t, no = get_thickness(atoms, 3)
+        t, no = get_thickness(atoms, 4)
         return t, no
     if ncore:
         cpus = ncore
     else:
         cpus = os.cpu_count()
-    thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(s) for s in tqdm(byteidx[:, 1])))
-    return np.vstack((byteidx[:, 1], thickness, num_o))
+    
+    thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(s) for s in tqdm(byteidx[batch[0]:batch[1], 1])))
+    return np.vstack((byteidx[batch[0]:batch[1], 1], thickness, num_o))
 
         
 def get_thickness(atoms, method=1, debug=False, raw_coords=False):
@@ -194,7 +199,33 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
             return max_Cu, min_O, num_O
         else:
             return max_Cu - min_O, num_O
+    elif method == 4:
+        # convert to MDAnalysis.Universe
+        # which has a low-level memory leak
+        letters = string.ascii_lowercase
 
+        random.seed(None)
+        filename = ''.join(random.choice(letters) for i in range(10))+'.data'
+        write(filename, atoms, format='lammps-data')
+        u = mda.Universe(filename, format='DATA', atom_style='id type x y z')
+        
+        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3)
+        top_idx = np.array([int(elm) for elm in inter.layers[0][0].elements]) - 1
+        top_z = np.mean(atoms.get_positions()[top_idx, 2])
+        del u, inter
+        gc.collect()
+        
+        atoms_o = atoms[np.array(atoms.get_chemical_symbols()) == 'O']
+        write(filename, atoms_o, format='lammps-data')
+        u = mda.Universe(filename, format='DATA', atom_style='id type x y z')
+        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3)
+        bot_idx = np.array([int(elm) for elm in inter.layers[1][0].elements]) - 1
+        bot_z = np.mean(atoms_o.get_positions()[bot_idx, 2])
+        num_O = len(atoms_o)
+        os.remove(filename)
+        del atoms, atoms_o, u, inter
+        gc.collect()
+        return top_z - bot_z, num_O
     return max_Cu - z_bottom
 
 

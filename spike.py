@@ -17,7 +17,6 @@ import multiprocessing as mp
 
 kb = consts.value('Boltzmann constant in eV/K')
 amu = consts.value('atomic mass constant')
-prob_cutoff = 1e-3
 
 def v_mps(m_d, T):
     """ rms velocity in meters per second """
@@ -38,7 +37,7 @@ def int_mb(m_d, v_mps, T):
 
     return non_integrated, integrated # nondimensional
 
-def v_cutoff(m_d, T):
+def v_cutoff(m_d, T, prob_cutoff):
     # determine cutoff velocity
     v_rms = v_mps(m_d, T)
     vs = np.linspace(v_rms, v_rms*10, 100)
@@ -95,8 +94,8 @@ def get_spike_range(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_i
     # v_mps     velocity in meters per second
     # ke_j      kinetic energy in joules
     
-    v_cut_cu = v_cutoff(63.54, T=temp)
-    v_cut_o  = v_cutoff(16, T=temp)
+    v_cut_cu = v_cutoff(63.54, T=temp, prob_cutoff=prob_cutoff)
+    v_cut_o  = v_cutoff(16, T=temp, prob_cutoff=prob_cutoff)
     # determine impact site
     try:
         impact_site, impact_idx, atom_idx = find_impact_site(atomss)
@@ -111,7 +110,7 @@ def get_spike_range(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_i
     position = current._identity[0]-33
     
     for atoms in atomss[impact_idx+1:]:
-    #for atoms in tqdm(atomss[impact_idx+1:], desc='SpikeRange-{:}-{:}'.format(position, impact_idx), position=position, leave=False):
+        # for atoms in tqdm(atomss[impact_idx+1:], desc='SpikeRange-{:}-{:}'.format(position, impact_idx), position=position, leave=False):
         vel = atoms.get_velocities()
         vel_normed = np.linalg.norm(vel, axis=1)
 
@@ -177,40 +176,56 @@ def get_spike_range(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_i
             deep = new_deep
     return dist, deep, atoms_hot[hot_list]
 
-def get_temp_grad(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_idx=0):
+def get_temp_grad(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, run_id=0):
     """ helper function in calculating the temperature gradient
     """
+    
+    def v2t(mass, atom_v):
+        mps2apfs = 1e10/1e15
+        tidx = (1/2*(mass*amu)*(atom_v/mps2apfs)**2)/(3*kb*consts.eV)
+        return tidx
+    
     from tqdm import tqdm
     # current = mp.current_process()
+    # position = current._identity[0]-33
         
-    v_cut_cu = v_cutoff(63.54, T=temp)
-    v_cut_o  = v_cutoff(16, T=temp)
-
+    v_cut_cu_original = v_cutoff(63.54, T=temp, prob_cutoff=prob_cutoff)
+    v_cut_o_original  = v_cutoff(16, T=temp, prob_cutoff=prob_cutoff)
+    
     # determine impact site
     try:
         impact_site, impact_idx, atom_idx = find_impact_site(atomss)
     except:
-        return -1, -1, -1
+        return -1, -1
     impact_atoms = atomss[impact_idx]
     min_o = min([at.position[2] for at in impact_atoms if at.symbol == 'O'])
     max_cu = max([at.position[2] for at in impact_atoms if at.symbol == 'Cu'])
     z_coord = np.linspace(min_o, max_cu, 20)
     tz = np.zeros(20)-1
-
-
-    hot_list = np.array([len(atomss[impact_idx])-1, atom_idx], dtype=int) # initial hot cu atom
-    #position = current._identity[0]-33
     
-    #    for atoms in atomss[impact_idx+1:]:
-    for atoms in tqdm(atomss[impact_idx+1:]):
+    hot_list = np.array([len(atomss[impact_idx])-1, atom_idx], dtype=int) # initial hot cu atom
+
+    
+    #for atoms in tqdm(atomss[impact_idx+1:], desc='SpikeRange-{:}-{:}'.format(position, impact_idx), position=position, leave=False):
+    for atoms in atomss[impact_idx+1:]:
         vel = atoms.get_velocities()
         vel_normed = np.linalg.norm(vel, axis=1)
+
+        # if len(hot_list) > 1:
+        #     v_cut_cu = np.append(vel_normed[[h for h in hot_list if atoms[h].symbol == 'Cu']]*0.8, v_cut_cu_original).min()
+        #     v_cut_o = np.append(vel_normed[[h for h in hot_list if atoms[h].symbol == 'O']]*0.8, v_cut_o_original).min()
+        #     v_cut_cu = max(v_cut_cu_original/1.414, v_cut_cu)
+        #     v_cut_o = max(v_cut_o_original/1.414, v_cut_o)
+        # else:
+        v_cut_cu = v_cut_cu_original
+        v_cut_o = v_cut_o_original
 
         # need to maintain a list of hot atoms, and require that
         # new hot atoms are within certain distance of the
         # existing hot atoms
-
+        # breakpoint()
         # current list
+        # print(v2t(64, v_cut_cu), v2t(16, v_cut_o))
         hot_mask_cu = (vel_normed > v_cut_cu) & (np.array(atoms.get_chemical_symbols()) == 'Cu')
         hot_mask_o = (vel_normed > v_cut_o) & (np.array(atoms.get_chemical_symbols()) == 'O')
         hot_mask = hot_mask_cu | hot_mask_o
@@ -227,7 +242,7 @@ def get_temp_grad(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_idx
 
             atoms_hot = atoms[hot_list] + atoms[h]
             atoms_hot.set_pbc(True)
-        # breakpoint()
+
             arr = atoms_hot.get_distances(np.arange(hot_list.size), -1,
                                           mic=True)
 
@@ -246,13 +261,29 @@ def get_temp_grad(atomss=None, temp=353, prob_cutoff=1e-5, pids=None, impact_idx
         hot_list = np.delete(hot_list, to_delete)
 
         # for each atom in hot_list, update corresponding temperature
-        for atom, atom_v in (atoms[hot_list], vel_normed[hot_list]):
+        for atom, atom_v in zip(atoms[hot_list], vel_normed[hot_list]):
             atom_z = atom.position[2]
             # index of the first z coordinate less than hot atom
-            breakpoint()
-            idx = np.argwhere(z_coord < atom_z)[0][0]
-            tz[idx] = max(atom_v, tz[idx])
-    
-    print(tz)
+            argwhere_res = np.argwhere(z_coord < atom_z)
+            if len(argwhere_res) == 0:
+                breakpoint()
+                print('bug: run_'+str(run_id))
+                return -1, -1
+            else:
+                idx = np.argwhere(z_coord < atom_z)[-1][0]
+                tidx = ke_j(atom.mass, atom_v) / (3/2*consts.k)
+                tz[idx] = max(tidx, tz[idx])
+                
+        # for z_idx in range(len(z_coord)-1):
+        #     if tz[z_idx] == -1:
+        #         layer_idxs = [at.index for at in atoms if at.position[2] < z_coord[z_idx+1] and at.position[2] >z_coord[z_idx]]
+        #         layer_vel = vel_normed[layer_idxs]
+        #         # kb in eV/K
+        #         kb_j = consts.k
+        #         layer_ke = np.array([ke_j(atoms[a_idx].mass, a_vel) for a_idx, a_vel in zip(layer_idxs, layer_vel)]).sum()
+        #         t_mean = layer_ke / (3/2*kb_j*len(layer_idxs))
+        #         #tz[z_idx] = t_mean
+
+    return z_coord, tz
 
 
