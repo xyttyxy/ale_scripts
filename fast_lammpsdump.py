@@ -175,40 +175,74 @@ def get_dump_image_indices(filename, penetration=False, parallel=True, ncore=Non
     return byte_indices
     # np.savetxt(outfile, byte_indices[1:, :], fmt='%d')        
 
-def read_dump(filename, find_step):
+
+def read_dump(path, find_step):
     """ random-access to structures in huge lammpsdump using mmap """
-    i = int(filename.split('.')[1])
-    with open(filename.format(i), 'r+') as dumpfile:
+
+    if path[0] == '/': # absolute path
+        folder = os.path.split(path)[0]
+        filename = os.path.split(path)[1]
+    else:
+        filename = path
+    splitted = filename.split('.')
+    
+    if len(splitted) == 3:
+        i = int(filename.split('.')[1])
+        has_runs = True
+        folder = '.'
+    else:
+        i = -1
+        has_runs = False
+        
+    with open(path, 'r+') as dumpfile:
         # memory-mapped file for very fast I/O
         m = mmap.mmap(dumpfile.fileno(), 0)
 
-        byte_indices = np.loadtxt('dump.{:}.byteidx'.format(i), dtype=np.uint64)
-        assert (find_step <= byte_indices[-1,1]).any() and (find_step >= byte_indices[0,1]).any(), 'problem: step specified not in range of dump'
-
-        byteidx_linum = int(np.where(byte_indices[:,1] == find_step)[0].item())
-
-        index4step = byte_indices[byteidx_linum, 0]
-
-        if byte_indices.shape[0] > byteidx_linum+1:
-            # index must be size-1
-            index4step_next = byte_indices[byteidx_linum+1, 0]
+        if has_runs:
+            idxfilename = folder+'/dump.{:}.byteidx'.format(i)
         else:
-            # reading last image in dump
-            index4step_next = np.uint64(m.size())
+            idxfilename = folder+'/dump.byteidx'
 
-        diffbyte = index4step_next - index4step
-        byte_idx = m.find(b'ITEM: TIMESTEP', index4step)
+        byteidx = np.loadtxt(idxfilename, dtype=np.uint64)
+            
+        def get_atoms(m, byteidx, step):
+            assert (step <= byteidx[-1,1]).any() \
+                & (step >= byteidx[0,1]).any(), \
+                'problem: step specified not in range of dump'
 
-        if byte_idx < 0:
-            # problem: byte sequence not found
-            assert byte_idx == index4step, 'problem: index specified in key file not found'
+            byteidx_linum = int(np.where(byteidx[:,1] == step)[0].item())
+
+            index4step = byteidx[byteidx_linum, 0]
+
+            if byteidx.shape[0] > byteidx_linum+1:
+                # index must be size-1
+                index4step_next = byteidx[byteidx_linum+1, 0]
+            else:
+                # reading last image in dump
+                index4step_next = np.uint64(m.size())
+
+            diffbyte = index4step_next - index4step
+            byte_idx = m.find(b'ITEM: TIMESTEP', index4step)
+
+            if byte_idx < 0:
+                # problem: byte sequence not found
+                assert byte_idx == index4step, 'problem: index specified byteidx is not start of atomic image'
+            else:
+                m.seek(byte_idx)
+
+            bytes = m.read(diffbyte).decode('utf-8')
+            df = LammpsDump.from_string(bytes)
+            at = dump2atoms(df, 'O')
+            return at
+        
+        if isinstance(find_step, list):
+            # returning multiple atoms object in a list
+            atomss = []
+            for step in find_step:
+                atomss.append(get_atoms(m, byteidx, step))
+            return atomss
         else:
-            m.seek(byte_idx)
-
-        bytes = m.read(diffbyte).decode('utf-8')
-        df = LammpsDump.from_string(bytes)
-        at = dump2atoms(df, 'O')
-        return at
+            return get_atoms(m, byteidx, find_step)
 
 
 def read_lammps_dump(fileobj, index=-1, order=True, atomsobj=Atoms, atom_types=None, return_all=False):

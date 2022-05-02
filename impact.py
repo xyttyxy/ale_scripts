@@ -126,7 +126,10 @@ def stitch_logs(runs):
             log_cat = log_cat[log_cat['Step'] > last_step]
             log_cat['Time'] += last_time
 
-        log.append(log_cat)
+        if log_cat.shape[0] == 0:
+            print('AHHHHH! You have duplicate runs!')
+        else:
+            log.append(log_cat)
 
     log = pd.concat(log, ignore_index=True)
     return log
@@ -267,7 +270,7 @@ def get_thicknesses(steps_ctrs, steps_brkt):
     
     thicknesses = []
     nos = []
-    atomss = []
+    # atomss = []
     j = 0
     for s in steps_ctrs:
         r = np.where(s >= steps_brkt)[0][-1]+1
@@ -293,7 +296,7 @@ def get_thicknesses(steps_ctrs, steps_brkt):
         
         thicknesses.append(t)
         nos.append(no)
-        atomss.append(atoms)
+        # atomss.append(atoms)
         j += 1
     return np.array(thicknesses), np.array(nos)
 
@@ -314,7 +317,6 @@ def get_all_thicknesses(filename, byteidx):
     
 
 def get_all_thicknesses_parallel(filename, byteidx, ncore=None):
-    from pqdm.processes import pqdm
     from tqdm import tqdm
     from joblib import Parallel, delayed
     
@@ -326,6 +328,7 @@ def get_all_thicknesses_parallel(filename, byteidx, ncore=None):
         cpus = ncore
     else:
         cpus = os.cpu_count()
+    
     thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(s) for s in tqdm(byteidx[:, 1])))
     return np.vstack((byteidx[:, 1], thickness, num_o))
 
@@ -348,7 +351,9 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
 
     z = atoms.get_positions()[:, 2]
     is_o = atoms.symbols == 'O'
-
+          
+    if sum(is_o) == 0:
+        return 0, 0
     min_O = min(z[is_o])
     # method 1
     # highest cu z coords
@@ -412,16 +417,27 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
         y_step = cell[1] / num_divs
         for ix in np.arange(0, num_divs):
             for iy in np.arange(0, num_divs):
-                min_Os[ix][iy] = positions[(positions[:,0] > ix*x_step)
-                                           & (positions[:,0] < (ix+1)*x_step)
-                                           & (positions[:,1] > iy*y_step)
-                                           & (positions[:,1] < (iy+1)*y_step)
-                                           & is_o, 2].min()
-                max_Cus[ix][iy] = positions[(positions[:,0] > ix*x_step)
-                                            & (positions[:,0] < (ix+1)*x_step)
-                                            & (positions[:,1] > iy*y_step)
-                                            & (positions[:,1] < (iy+1)*y_step)
-                                            & ~is_o, 2].max()
+                mask = (positions[:,0] > ix*x_step) \
+                    & (positions[:,0] < (ix+1)*x_step) \
+                    & (positions[:,1] > iy*y_step) \
+                    & (positions[:,1] < (iy+1)*y_step) \
+                    & is_o
+                
+                if sum(mask) == 0:
+                    min_Os[ix][iy] = positions[is_o, 2].min()
+                else:
+                    min_Os[ix][iy] = positions[mask, 2].min()
+
+                mask = (positions[:,0] > ix*x_step) \
+                    & (positions[:,0] < (ix+1)*x_step) \
+                    & (positions[:,1] > iy*y_step) \
+                    & (positions[:,1] < (iy+1)*y_step) \
+                    & ~is_o
+                
+                if sum(mask) == 0:
+                    max_Cus[ix][iy] = positions[~is_o, 2].max()
+                else:
+                    max_Cus[ix][iy] = positions[mask, 2].max()
 
         # remove highest and lowest
         min_Os = np.sort(min_Os.flatten())[1:-1]
