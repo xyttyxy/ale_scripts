@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import multiprocessing as mp
 
 
-def get_thicknesses(steps_ctrs, steps_brkt):
+def get_thicknesses(steps_ctrs, steps_brkt, method):
     """ Wrapper around get_thickness used in stitch_runs
     Note: retrieves structures (ase.Atoms) from 2 possibilities
     1. if db file exists, read sql db. This is the fastest. 
@@ -40,8 +40,10 @@ def get_thicknesses(steps_ctrs, steps_brkt):
             
         if os.path.exists('dump.{:}.thickness'.format(r)):
             nparr = np.loadtxt('dump.{:}.thickness'.format(r))
-            t = nparr[np.where(np.arr[0] == s), 1]
-            no = nparr[np.where(np.arr[0] == s), 2]
+            print(s, np.where(nparr[:, 0].astype(np.int) == s))
+            row = nparr[np.where(nparr[:, 0].astype(np.int) == s)[0][0], :]
+            t = row[1]
+            no = row[2]
         else:
             if os.path.exists('run_{:}.db'.format(r)):
                 atoms = read('run_{:}.db@timestep={:}'.format(r, s))[0]
@@ -52,7 +54,7 @@ def get_thicknesses(steps_ctrs, steps_brkt):
                 t = 0
                 no = 0
             else:
-                t, no = get_thickness(atoms, 3)
+                t, no = get_thickness(atoms, method)
         
         thicknesses.append(t)
         nos.append(no)
@@ -209,7 +211,7 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
         write(filename, atoms, format='lammps-data')
         u = mda.Universe(filename, format='DATA', atom_style='id type x y z')
         
-        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3)
+        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3,normal='z')
         top_idx = np.array([int(elm) for elm in inter.layers[0][0].elements]) - 1
         top_z = np.mean(atoms.get_positions()[top_idx, 2])
         del u, inter
@@ -218,14 +220,22 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
         atoms_o = atoms[np.array(atoms.get_chemical_symbols()) == 'O']
         write(filename, atoms_o, format='lammps-data')
         u = mda.Universe(filename, format='DATA', atom_style='id type x y z')
-        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3)
+        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3, normal='z')
         bot_idx = np.array([int(elm) for elm in inter.layers[1][0].elements]) - 1
-        bot_z = np.mean(atoms_o.get_positions()[bot_idx, 2])
         num_O = len(atoms_o)
-        os.remove(filename)
-        del atoms, atoms_o, u, inter
-        gc.collect()
-        return top_z - bot_z, num_O
+        if len(bot_idx) != 0 and len(bot_idx) != 0:
+            bot_z = np.mean(atoms_o.get_positions()[bot_idx, 2])
+            os.remove(filename)
+            del atoms, atoms_o, u, inter
+            gc.collect()
+            if top_z > bot_z:
+                thickness = top_z - bot_z
+            else:
+                thickness = 0
+        else:
+            thickness = 0
+                
+        return thickness, num_O
     return max_Cu - z_bottom
 
 

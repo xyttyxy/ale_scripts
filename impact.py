@@ -4,6 +4,8 @@ import pandas as pd
 from PIL import Image
 from ase.io import read, write
 from ase.neighborlist import build_neighbor_list
+from pymatgen.io.lammps.outputs import parse_lammps_log
+
 
 """ post-processing for low-temperature plasma impact MD simulations """
 
@@ -247,3 +249,5 @@ def get_snap_imgs(steps_ctrs, steps_brkt):
 
         im1 = im.crop((left, top, right, bottom))
         im1.save(im_filename)
+
+
