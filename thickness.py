@@ -225,7 +225,11 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
         os.remove(filename)
         del atoms, atoms_o, u, inter
         gc.collect()
-        return top_z - bot_z, num_O
+        if not raw_coords:
+            return top_z - bot_z, num_O
+        else:
+            return top_z, bot_z
+        
     return max_Cu - z_bottom
 
 
