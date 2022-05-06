@@ -1,19 +1,9 @@
 import os
-import mmap
 import numpy as np
 import pandas as pd
 from PIL import Image
-from scipy import special
-from scipy import constants as consts
-from scipy.signal import find_peaks
-from ase import Atoms, Atom
-from ase.db import connect
 from ase.io import read, write
 from ase.neighborlist import build_neighbor_list
-from fast_lammpsdump import read_dump
-from pymatgen.io.lammps.outputs import LammpsDump, parse_lammps_dumps, parse_lammps_log
-import matplotlib.pyplot as plt
-import multiprocessing as mp
 
 """ post-processing for low-temperature plasma impact MD simulations """
 
@@ -126,7 +116,10 @@ def stitch_logs(runs):
             log_cat = log_cat[log_cat['Step'] > last_step]
             log_cat['Time'] += last_time
 
-        log.append(log_cat)
+        if log_cat.shape[0] == 0:
+            print('AHHHHH! You have duplicate runs!')
+        else:
+            log.append(log_cat)
 
     log = pd.concat(log, ignore_index=True)
     return log
@@ -254,5 +247,3 @@ def get_snap_imgs(steps_ctrs, steps_brkt):
 
         im1 = im.crop((left, top, right, bottom))
         im1.save(im_filename)
-
-
