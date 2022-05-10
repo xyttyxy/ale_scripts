@@ -1,24 +1,15 @@
 import os
 import gc
-import mmap
 import numpy as np
 import random, string
 import pytim
 import MDAnalysis as mda
-import pandas as pd
-from PIL import Image
-from scipy import special
-from scipy import constants as consts
+from tqdm import tqdm
 from scipy.signal import find_peaks
-from ase import Atoms, Atom
-from ase.db import connect
 from ase.io import read, write
-from ase.neighborlist import build_neighbor_list
 from fast_lammpsdump import read_dump
-from pymatgen.io.lammps.outputs import LammpsDump, parse_lammps_dumps, parse_lammps_log
 import matplotlib.pyplot as plt
-import multiprocessing as mp
-
+from joblib import Parallel, delayed
 
 def get_thicknesses(steps_ctrs, steps_brkt, method):
     """ Wrapper around get_thickness used in stitch_runs
@@ -33,7 +24,7 @@ def get_thicknesses(steps_ctrs, steps_brkt, method):
     nos = []
     atomss = []
     j = 0
-    for s in steps_ctrs:
+    def foo(s):
         r = np.where(s >= steps_brkt)[0][-1]+1
         if r == len(steps_brkt):
             r -= 1
@@ -55,16 +46,15 @@ def get_thicknesses(steps_ctrs, steps_brkt, method):
                 no = 0
             else:
                 t, no = get_thickness(atoms, method)
-        
-        thicknesses.append(t)
-        nos.append(no)
-        atomss.append(atoms)
-        j += 1
+        return t, no
+    
+    thicknesses, nos = zip(*Parallel(n_jobs=8)(delayed(foo)(s) for s in tqdm(steps_ctrs)))
+
     return np.array(thicknesses), np.array(nos)
 
 
 def get_all_thicknesses(filename, byteidx):
-    from tqdm import tqdm
+
     
     thicknesses = np.empty(1)
     num_o = np.empty(1)
@@ -79,9 +69,7 @@ def get_all_thicknesses(filename, byteidx):
     
 
 def get_all_thicknesses_parallel(filename, byteidx, ncore=None, batch=None):
-    from pqdm.processes import pqdm
-    from tqdm import tqdm
-    from joblib import Parallel, delayed
+
 
     def foo(s):
         atoms = read_dump(filename, s)
@@ -234,10 +222,6 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
                 thickness = 0
         else:
             thickness = 0
-
-        os.remove(filename)                
-        del atoms, atoms_o, u, inter
-        gc.collect()
         
         if not raw_coords:
             return thickness, num_O
