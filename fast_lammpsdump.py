@@ -171,9 +171,11 @@ def get_dump_image_indices(filename, penetration=False, parallel=True, ncore=Non
             byte_indices = np.concatenate([c for c in chunk_results if c.ndim == 2])
     else:
         byte_indices = get_dump_image_indices_segment(filename, 0, file_size)
+        
+    np.savetxt(outfile, byte_indices[:, :], fmt='%d')
 
     return byte_indices
-    # np.savetxt(outfile, byte_indices[1:, :], fmt='%d')        
+
 
 
 def read_dump(path, find_step):
@@ -204,7 +206,7 @@ def read_dump(path, find_step):
             idxfilename = folder+'/dump.byteidx'
 
         byteidx = np.loadtxt(idxfilename, dtype=np.uint64)
-            
+
         def get_atoms(m, byteidx, step):
             assert (step <= byteidx[-1,1]).any() \
                 & (step >= byteidx[0,1]).any(), \
@@ -439,7 +441,7 @@ def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=-1, order=True, atomso
                 elif t == 4:
                     symbols.append('H')
 
-            at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True)
+            at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True, tags=data['id'])
             if 'vx' in columns:
                 vel = data[['vx','vy','vz']].to_numpy(float) / units.fs
                 # breakpoint()
