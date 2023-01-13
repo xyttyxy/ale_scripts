@@ -82,7 +82,6 @@ def check_short_distances(atoms, elm_1, elm_2):
         arr = arr[arr > 0]
         max_dist[i] = np.min(arr)
 
-    print(np.min(max_dist))
     return np.min(max_dist)
 
 

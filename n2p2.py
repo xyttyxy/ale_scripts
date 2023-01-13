@@ -1,3 +1,4 @@
+
 # -*- mode: python; python-indent-offset: 4 -*-
 import numpy as np
 import pandas as pd
@@ -31,7 +32,7 @@ def n2p2_data(atoms, energy, name):
 
     return out_str
 
-def read_n2p2_data(filename):
+def read_n2p2_data(filename, sort = True):
     """ ase.Atoms from n2p2 data format """
     begin_indx = []
     end_indx = []
@@ -62,7 +63,8 @@ def read_n2p2_data(filename):
     comments = [atoms.info['name'] for atoms in atoms_lst]
 
     # ensure sorted by comment, fix MPI messing with ordering
-    atoms_lst = [atoms for _, atoms in sorted(zip(comments, atoms_lst))]
+    if sort:
+        atoms_lst = [atoms for _, atoms in sorted(zip(comments, atoms_lst))]
     return atoms_lst
 
 def write_dft_db(dbname, dirs, dir_parser):
