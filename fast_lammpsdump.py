@@ -1,4 +1,4 @@
-from pymatgen.io.lammps.outputs import parse_lammps_dumps, LammpsDump
+from pymatgen.io.lammps.outputs import parse_lammps_dumps, LammpsDump, parse_lammps_log
 import mmap
 import multiprocessing as mp
 import os
@@ -412,40 +412,112 @@ def read_lammps_dump(fileobj, index=-1, order=True, atomsobj=Atoms, atom_types=N
         return images[index]
 
 
-def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=-1, order=True, atomsobj=Atoms, impact_type='O', return_all=False):
+def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_velocities=False, log_file=None, impact_type = 'O'):
+    import warnings
+    data = df_struct.data
+    lat = df_struct.box.to_lattice()
+    columns = data.columns.to_list()
+
+    # https://docs.lammps.org/units.html
+    assert lmp_units == 'real', f'units {units} not implemented'
+    
+    # conversion factors from lammps to ase
+    # ase use eV = 1, Angstrom = 1, amu = 1
+    if lmp_units == 'real':
+        conv_e = units.kcal/units.mol
+        conv_t = units.fs
+        conv_l = units.Angstrom
+
+    # test for cartesian or direct coordinates
+    if all(val in columns for val in ['xs', 'ys', 'zs']):
+        coords = np.array(data[['xs','ys','zs']]) * np.array([lat.a,lat.b,lat.c]) * conv_l
+    elif all(val in columns for val in ['x', 'y', 'z']):
+        coords = np.array(data[['x','y','z']]) * conv_l
+    else:
+        raise RuntimeError('Coordinates not found in dump')
+
+    # determine atom identity
+    if 'element' in columns:
+        symbols = data['element'].tolist()
+    elif 'type' in columns:
+        warnings.warn('Legacy assumption of element identity from type used!', DeprecationWarning)
+        types = data['type']
+        symbols = []
+        for t in types:
+            if t == 1:
+                symbols.append('Cu')
+            elif t == 2:
+                symbols.append(impact_type)
+            elif t == 3:
+                symbols.append('C')
+            elif t == 4:
+                symbols.append('H')
+    else:
+        raise RuntimeError('Atom identity cannot be determined')
+
+    # default forces to 0
+    forces = np.zeros_like(coords)
+    # test for forces
+    if read_forces:
+        if all(val in columns for val in ['fx', 'fy', 'fz']):
+            forces = data[['fx', 'fy', 'fz']].to_numpy(float) * conv_e / conv_l
+        else:
+            warnings.warn('Forces not found in dump', RuntimeWarning)
+
+    def last_en_from_log(log_file):
+        log_read = parse_lammps_log(log_file)
+        # check if there are multiple segments of runs
+        if isinstance(log_read, list):
+            log_read = log_read[-1]
+
+        columns_to_check = ['E_pair', 'TotEng'] # not fields in thermo command
+        
+        if not any(val in log_read.columns for val in columns_to_check):
+            retval = 0.0
+            warnings.warn('Energy not found in log, returning 0.0', RuntimeWarning)
+        else:
+            for col in columns_to_check:
+                if col in log_read.columns:
+                    retval = log_read[col].tolist()[-1]
+                    break
+        return retval
+
+    # test for energy in lammps log file
+    en = 0.0
+    if log_file and os.path.isfile(log_file):
+        en = last_en_from_log(log_file) * conv_e
+        
+    at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True, tags=data['id'])
+    calc = SinglePointCalculator(at, energy=en, forces=forces)
+    at.calc = calc
+    # test for velocities
+    if read_velocities:
+        if all(val in columns for val in ['vx', 'vy', 'vz']):
+            # divide because velocity is time^-1
+            vel = data[['vx','vy','vz']].to_numpy(float) / conv_t
+            return at, vel
+        else:
+            raise RuntimeError('Velocities not found in dump')
+        
+
+    return at
+        
+def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=None, order=True, atomsobj=Atoms, impact_type='O', return_all=False, read_forces = False, log_file=None):
     """This is a wrapper around pymatgen generator, to get the list of atoms
     Note: on a very large dump file this will eat the RAM very quickly. Use with caution. """
     LD = parse_lammps_dumps(fileobj)
-    # breakpoint()
-    atoms_view = []
-    i = 0
-    for a in LD:
-        i = i + 1
-        if i % every_n == 0:
-            data = a.data
-            lat = a.box.to_lattice()
-            columns = data.columns.to_list()
-            if 'xs' not in columns and 'x' in columns:
-                coords = np.array(data[['x','y','z']])
-            else:
-                coords = np.array(data[['xs','ys','zs']]) * np.array([lat.a,lat.b,lat.c])
-            types = data['type']
-            symbols = []
-            for t in types:
-                if t == 1:
-                    symbols.append('Cu')
-                elif t == 2:
-                    symbols.append(impact_type)
-                elif t == 3:
-                    symbols.append('C')
-                elif t == 4:
-                    symbols.append('H')
+    if index:
+        for a in LD: # grossly inefficient, but I want the last item and don't want to rewrite the iterator
+            pass
+        at = parse_single_struct(a, read_forces=read_forces, log_file=log_file)
+        return at
+    else:
+        atoms_view = []
+        i = 0
+        for a in LD:
+            i = i + 1
+            if i % every_n == 0:
+                at = parse_single_struct(a, read_forces=read_forces)
+                atoms_view.append(at)
 
-            at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True, tags=data['id'])
-            if 'vx' in columns:
-                vel = data[['vx','vy','vz']].to_numpy(float) / units.fs
-                # breakpoint()
-                at.set_velocities(vel)
-            atoms_view.append(at)
-
-    return atoms_view
+        return atoms_view
