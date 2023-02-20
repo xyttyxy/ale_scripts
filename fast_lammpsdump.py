@@ -454,7 +454,7 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
                 symbols.append('H')
     else:
         raise RuntimeError('Atom identity cannot be determined')
-
+        
     # default forces to 0
     forces = np.zeros_like(coords)
     # test for forces
@@ -486,8 +486,15 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
     en = 0.0
     if log_file and os.path.isfile(log_file):
         en = last_en_from_log(log_file) * conv_e
-        
-    at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True, tags=data['id'])
+
+    # try to sort everything    
+    if 'id' in columns:
+        atom_ids = data['id'].tolist()
+        symbols = [s for _, s in sorted(zip(atom_ids, symbols))]
+        forces  = [f for _, f in sorted(zip(atom_ids, forces))]
+        coords  = [c for _, c in sorted(zip(atom_ids, coords))]
+    
+    at = Atoms(symbols = symbols, positions = coords, cell = [lat.a, lat.b, lat.c], pbc=True, tags=sorted(atom_ids))
     calc = SinglePointCalculator(at, energy=en, forces=forces)
     at.calc = calc
     # test for velocities
@@ -495,6 +502,8 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
         if all(val in columns for val in ['vx', 'vy', 'vz']):
             # divide because velocity is time^-1
             vel = data[['vx','vy','vz']].to_numpy(float) / conv_t
+            if 'id' in columns:
+                vel = [v for _, v in sorted(atom_ids, vel)]
             return at, vel
         else:
             raise RuntimeError('Velocities not found in dump')
