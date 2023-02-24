@@ -518,7 +518,7 @@ def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=None, order=True, atom
     if index:
         for a in LD: # grossly inefficient, but I want the last item and don't want to rewrite the iterator
             pass
-        at = parse_single_struct(a, read_forces=read_forces, log_file=log_file)
+        at = parse_single_struct(a, read_forces=read_forces, log_file=log_file, impact_type=impact_type)
         return at
     else:
         atoms_view = []

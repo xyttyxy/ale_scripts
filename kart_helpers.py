@@ -1,3 +1,7 @@
+# Collection of scripts to manipulate graphs using networkx and C++ programs
+# Author: Yantao Xia
+# Date: 02/2023
+
 import networkx as nx
 import pickle
 from ase.io import read
@@ -9,11 +13,18 @@ import subprocess
 import random
 import os
 import re
-# import matplotlib.pyplot as plt
+
+
+# Paths to the separately compiled C/C++ programs
 
 glasgow_subgraph_solver = os.getenv('GLASGOW_ROOT')+'/glasgow_subgraph_solver'
 glasgow_common_subgraph_solver = os.getenv('GLASGOW_ROOT')+'/glasgow_common_subgraph_solver'
 mcsplit_solver = os.getenv('MCSPLIT_ROOT')+'/mcsplit-mcis-sparse'
+mcsxyt_solver = os.getenv('MCSXYT_ROOT')+'/mcsp_xyt'
+
+
+# networkx-based slow toy methods
+
 
 def nx_modular_product(G, H):
     r"""Returns the modular product of G and H
@@ -91,8 +102,20 @@ def nx_get_mcs(G, H, which_graph='first'):
 
 
 def nx_common_edges(G, H):
+    r"""Returns the number of common edges after MCS is calculated.
+
+    This is pure-python based and slow, not practical at all. 
+
+    Parameters
+    ----------
+    G, H: graphs
+
+    Returns: 
+    ----------
+    The calculated 'distance metric' as the geometric mean of the fractions of common edges
+    """
     import numpy as np
-    mcs = get_mcs(G, H)
+    mcs = nx_get_mcs(G, H)
     num_edges_mcs = len(mcs.edges)
     num_edges_G = len(G.edges)
     num_edges_H = len(H.edges)
@@ -101,7 +124,24 @@ def nx_common_edges(G, H):
     print(metric)
     
 
+# general utilities
+
+
 def network_plot_3D(G):
+    r"""Plot a graph using 3D position node attributes 
+    
+    This method allows interactive visualization of connectivity graph, 
+    implemented using plotly. The atomic positions must be specified 
+    as node attributes under the dictionary key 'pos'. 
+    
+    Parameters:
+    ----------
+    G: the input graph, complete with position
+    
+    Returns:
+    ----------
+    None
+    """
     edge_x = []
     edge_y = []
     edge_z = []
@@ -179,14 +219,36 @@ def get_full_config_graph():
     return G
 
 
-def get_per_atom_graph():
+# kart output parsers
 
-    atoms = read('after_opt.vasp')
+
+def get_per_atom_graph(full_config='after_opt.vasp', cluster_path='clusters'):
+    r""" Convert connectivity graph from K-ART program to networkx objects
+    
+    This script converts the atom-centered cluster connectivity matrices
+    written by a modified K-ART program into networkx graphs.
+    See <kart>/src/lib/Find_topos.f90
+
+    Parameters:
+    ----------
+    full_config: path to a ase-readable file containing a single atomic 
+    configuration corresponding to the whole system
+
+    cluster_path: path to the output path of the modified K-ART program. 
+    The cluster files are expected to be named index.path where index is 
+    the atomic index, starting at 1. Note this is Fortran convention,
+    ASE starts at 0. 
+    
+    Returns:
+    --------
+    graphs: a list of networkx graphs. The nodes
+    """
+    atoms = read(full_config)
 
     graphs = []
     for a in atoms:
         G = nx.Graph()
-        with open(f'clusters/{a.index+1}.dat') as f_cluster:
+        with open(f'{cluster_path}/{a.index+1}.dat') as f_cluster:
             lines = f_cluster.readlines()
             
         lines = [[int(e) for e in l.rstrip().split()] for l in lines]
@@ -285,13 +347,12 @@ def write_gfd_with_center(G, filename, center_atom, atoms=None):
         f.write(f'#{filename}\n')
         f.write(f'{G.number_of_nodes()}\n')
         for n in G.nodes():
-            if n == center_atom:
-                symbol = f'center-{atoms[n].symbol}'
+            if atoms:
+                symbol = atoms[n].symbol
             else:
-                if atoms:
-                    symbol = atoms[n].symbol
-                else:
-                    symbol = G.nodes[n]['symbol']
+                symbol = G.nodes[n]['symbol']
+            if n == center_atom:
+                symbol = 'center-'+symbol
                     
             f.write(f'{labels[symbol]}\n')
         f.write(f'{G.number_of_edges()}\n')
@@ -306,6 +367,63 @@ def set_topos():
     atoms.set_tags(markers)
     return atoms
 
+def parse_xyt(stdout, G, H):
+    solution_size = 0
+    mapping_linum = -1
+    try:
+        for line_idx, line in enumerate(stdout):
+            if 'Solution size' in line:
+                solution_size = int(line.split()[-1])
+                mapping_linum = line_idx+1
+    except ValueError:
+        G_sub = nx.Graph()
+        H_sub = nx.Graph()
+        return G_sub, H_sub, solution_size
+
+    if solution_size == 0:
+        G_sub = nx.Graph()
+        H_sub = nx.Graph()
+        return G_sub, H_sub, solution_size
+
+    mapping_line = stdout[mapping_linum]
+    mapping = mapping_line.split(') (')
+    mapping = [re.sub(r'[)|(]', '', elm).split('->') for elm in mapping]
+    
+    def build_subgraph(mapping, original_graph, index):
+        try:
+            nodes = [int(elm[index]) for elm in mapping]
+        except ValueError:
+            [print(m) for m in mapping]
+        
+        return original_graph.subgraph([list(original_graph.nodes)[idx] for idx in nodes])
+
+    G_sub = build_subgraph(mapping, G, 0)
+    H_sub = build_subgraph(mapping, H, 1)
+    
+    return G_sub, H_sub, solution_size
+
+
+def mcs_xyt(g0, g1, center0, center1, rank):
+    identifier = rank
+    f0 = f'temp_g0_{identifier}.gfd'
+    f1 = f'temp_g1_{identifier}.gfd'
+    write_gfd_with_center(g0, f0, center0)
+    write_gfd_with_center(g1, f1, center1)
+    proc = subprocess.run([mcsxyt_solver, 
+                           '--connected',
+                           '-g', # gfd input format
+                           'min_max', # heuristic
+                           f0, f1], capture_output=True)
+    # proc = subprocess.run([mcsplit_solver, 
+    #                        '--vertex-labelled-only',
+    #                        '-g', # gfd input format
+    #                        'A', # heuristic
+    #                        f0, f1], capture_output=True)
+
+    stdout = proc.stdout.decode().split('\n')
+    os.remove(f0)
+    os.remove(f1)
+    return parse_xyt(stdout, g0, g1)
 
 def parse_glasgow(stdout, G, H):
     status = any(['status = true' in line for line in stdout])
@@ -424,34 +542,37 @@ def calculate_mcs(G, H, atoms = None):
     return G_sub, H_sub, solution_size
     
 
-def match_subgraph(pattern, target, atoms=None):
-    identifier = f'{random.getrandbits(32)}'
-    write_lad(pattern, f'temp_pattern_{identifier}', atoms)
-    write_lad(target, f'temp_target_{identifier}', atoms)
-    
-    proc = subprocess.run([glasgow_subgraph_solver,
-                           '--induced',
-                           '--format', 'vertexlabelledlad',
-                           f'temp_pattern_{identifier}', f'temp_target_{identifier}'], capture_output=True)
-    stdout = proc.stdout.decode().split('\n')
+def match_subgraph(pattern, target, atoms=None, identifier=None, rematch=True):
+    if rematch:
+        if not identifier:
+            identifier = f'{random.getrandbits(32)}'
+        write_lad(pattern, f'temp_pattern_{identifier}', atoms)
+        write_lad(target, f'temp_target_{identifier}', atoms)
 
-    try:
-        matched_pattern, target_subgraph, solution_size = parse_glasgow(stdout, pattern, target)
-    except AssertionError:
-        # because pattern is obtained as a maximum common subgraph to target and some other graph, pattern is guaranteed to be in target
-        print('common subgraph not found to be subgraph isomorphic to target, aborting...')
-        breakpoint()
-        exit()
-    
-    os.remove(f'temp_pattern_{identifier}')
-    os.remove(f'temp_target_{identifier}')
+        proc = subprocess.run([glasgow_subgraph_solver,
+                               '--induced',
+                               '--format', 'vertexlabelledlad',
+                               f'temp_pattern_{identifier}', f'temp_target_{identifier}'], capture_output=True)
+        stdout = proc.stdout.decode().split('\n')
 
-    # obtain the part of target not matched to pattern
-    # note: nx.difference does not do this. It just differences the edges
-    
-    target_antisubgraph = target.subgraph([n for n in target.nodes if n not in target_subgraph.nodes])
-    return target_antisubgraph
+        try:
+            matched_pattern, target_subgraph, solution_size = parse_glasgow(stdout, pattern, target)
+        except AssertionError:
+            # because pattern is obtained as a maximum common subgraph to target and some other graph, pattern is guaranteed to be in target
+            print('common subgraph not found to be subgraph isomorphic to target, aborting...', stdout)
+            exit()
 
+        os.remove(f'temp_pattern_{identifier}')
+        os.remove(f'temp_target_{identifier}')
+
+        # obtain the part of target not matched to pattern
+        # note: nx.difference does not do this. It just differences the edges
+
+        target_antisubgraph = target.subgraph([n for n in target.nodes if n not in target_subgraph.nodes])
+        return target_antisubgraph
+    else:
+        target_antisubgraph = target.subgraph([n for n in target.nodes if n not in pattern.nodes])
+        return target_antisubgraph
 
 def distance(G_atoms, H_atoms, G_sub, H_sub):
     # from mcs we can extract the non-matched atoms
