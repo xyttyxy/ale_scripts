@@ -277,6 +277,26 @@ def write_gfd(G, filename, atoms=None):
         for u, v in G.edges():
             f.write(f'{mapping[u]} {mapping[v]}\n')
 
+def write_gfd_with_center(G, filename, center_atom, atoms=None):
+    mapping = {node: idx for idx, node in enumerate(G.nodes)}
+    labels = {'Cu': 2, 'O': 3, 'center-Cu': 0, 'center-O': 1}
+    with open(filename, "w") as f:
+        # write the header
+        f.write(f'#{filename}\n')
+        f.write(f'{G.number_of_nodes()}\n')
+        for n in G.nodes():
+            if n == center_atom:
+                symbol = f'center-{atoms[n].symbol}'
+            else:
+                if atoms:
+                    symbol = atoms[n].symbol
+                else:
+                    symbol = G.nodes[n]['symbol']
+                    
+            f.write(f'{labels[symbol]}\n')
+        f.write(f'{G.number_of_edges()}\n')
+        for u, v in G.edges():
+            f.write(f'{mapping[u]} {mapping[v]}\n')
 
 def set_topos():
     atoms = read('after_opt.vasp')
