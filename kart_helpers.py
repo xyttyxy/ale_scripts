@@ -309,7 +309,14 @@ def parse_glasgow(stdout, G, H):
 
         
 def parse_mcsplit(stdout, G, H):
-    solution_size = int(stdout[2].split()[-1])
+    try:
+        solution_size = int(stdout[2].split()[-1])
+    except ValueError:
+        solution_size = 0
+        G_sub = nx.Graph()
+        H_sub = nx.Graph()
+        return G_sub, H_sub, solution_size
+        
     mapping = stdout[-1].split(',')[:-1]
     mapping = [elm.split('-') for elm in mapping]
     
@@ -383,7 +390,6 @@ def mcs_mcsplit(G, H, atoms):
 
 
 def calculate_mcs(G, H, atoms = None):
-    print('running mcs algorithms')
     try:
         G_sub, H_sub, solution_size = mcs_constraint_programming(G, H, atoms)
     except AssertionError:
