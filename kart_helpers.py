@@ -203,13 +203,35 @@ def network_plot_3D(G):
     fig.show()
 
 
-def get_full_config_graph():
+def get_full_config_graph(full_config='after_opt.vasp', cluster_path='clusters'):
+    r""" Construct whole-configuration connectivity network
+    
+    This script converts the atom-centered cluster connectivity matrices
+    written by a modified K-ART program into networkx graphs. The resulting 
+    graph is a connectivity matrix spanning the full configuration. 
+    See <kart>/src/lib/Find_topos.f90
+
+    Parameters:
+    ----------
+    full_config: path to a ase-readable file containing a single atomic 
+    configuration corresponding to the whole system
+
+    cluster_path: path to the output path of the modified K-ART program. 
+    The cluster files are expected to be named index.path where index is 
+    the atomic index, starting at 1. Note this is Fortran convention,
+    ASE starts at 0. 
+    
+    Returns:
+    --------
+    graphs: a single graph corresponding to connectivity of the whole structure.
+    """
+
     G = nx.Graph()
-    atoms = read('after_opt.vasp')
+    atoms = read(full_config)
     pos = {a.index: a.position for a in atoms}
     for a in atoms:
         G.add_node(a.index)
-        with open(f'clusters/{a.index+1}.dat') as f_cluster:
+        with open(f'{clusters}/{a.index+1}.dat') as f_cluster:
             lines = f_cluster.readlines()
 
         lines = [[int(e) for e in l.rstrip().split()] for l in lines]
@@ -274,7 +296,24 @@ def get_per_atom_graph(full_config='after_opt.vasp', cluster_path='clusters'):
     return graphs
     
 
-def write_dimacs(G, filename, atoms):
+# graph file writers
+
+
+def write_dimacs(G, filename, atoms=None):
+    r""" Write DIMACS graph file. 
+    
+    DIMACS file format is specified at: http://prolland.free.fr/works/research/dsat/dimacs.html
+    This script writes a subset of the specs expected by <mcsplit-si>/sparsegraph.c
+    
+    Parameters:
+    ----------
+    G: the input networkx graph 
+
+    filename: output filename
+    
+    atoms: optional, for determining node labels when node 'pos' 
+    attribute not present
+    """
     mapping = {node: idx for idx, node in enumerate(G.nodes)}
     labels = {'Cu': 0, 'O': 1}
     with open(filename, "w") as f:
@@ -284,10 +323,27 @@ def write_dimacs(G, filename, atoms):
         for u, v in G.edges():
             f.write(f"e {mapping[u]+1} {mapping[v]+1}\n")
         for n in G.nodes():
-            f.write(f"n {mapping[n]+1} {labels[atoms[n].symbol]}\n")
+            if atoms:
+                symbol = atoms[n].symbol
+            else:
+                symbol = G.nodes[n]['symbol']
+            f.write(f"n {mapping[n]+1} {labels[symbol]}\n")
 
 
 def write_lad(G, filename, atoms=None):
+    r""" Write LAD graph file
+    
+    LAD format examples: https://perso.liris.cnrs.fr/christine.solnon/SIP.html
+    
+    Parameters:
+    ----------
+    G: the input networkx graph 
+
+    filename: output filename
+    
+    atoms: optional, for determining node labels when node 'pos' 
+    attribute not present
+    """
     # lad file: example
     # actual comment is c and must be on its own line
     # for illustration I use ! for in-line comment
@@ -323,6 +379,20 @@ def write_lad(G, filename, atoms=None):
             
 
 def write_gfd(G, filename, atoms=None):
+    r""" Write GFD graph file
+    
+    GFD format specification: https://github.com/InfOmics/RI
+    
+    Parameters:
+    ----------
+    G: the input networkx graph 
+
+    filename: output filename
+    
+    atoms: optional, for determining node labels when node 'pos' 
+    attribute not present
+    """
+    
     mapping = {node: idx for idx, node in enumerate(G.nodes)}
     labels = {'Cu': 0, 'O': 1}
     with open(filename, "w") as f:
@@ -340,6 +410,26 @@ def write_gfd(G, filename, atoms=None):
             f.write(f'{mapping[u]} {mapping[v]}\n')
 
 def write_gfd_with_center(G, filename, center_atom, atoms=None):
+    r""" Write GFD graph file that specifies center atom
+    
+    GFD format specification: https://github.com/InfOmics/RI
+    As an extension to the specs here we use a elementwise unique label 
+    for the 'center atom'. This is specific to the mcs-based distance
+    metric.
+    
+    Parameters:
+    ----------
+    G: the input networkx graph 
+
+    filename: output filename
+
+    center_atom: the index of the center atom. This index must correspond 
+    to the node label. 
+    
+    atoms: optional, for determining node labels when node 'pos' 
+    attribute not present
+    """
+
     mapping = {node: idx for idx, node in enumerate(G.nodes)}
     labels = {'Cu': 2, 'O': 3, 'center-Cu': 0, 'center-O': 1}
     with open(filename, "w") as f:
@@ -678,15 +768,18 @@ def par_worker(ia, ja, graphs, atoms):
     return d
 
 
-def atoms2nx(atoms, cutoff):
+def atoms2nx(atoms, cutoff_in=None):
     G = nx.Graph()
     dm = atoms.get_all_distances(mic=True)
     natoms = len(atoms)
     symbols = atoms.get_chemical_symbols()
     nodes = [(p, dict(symbol=q)) for p, q in zip(range(natoms), symbols)]
     G.add_nodes_from(nodes)
+    cutoffs = {'Cu': {'O': 2.3, 'Cu': 2.8},
+               'O': {'Cu': 2.3, 'O': 2.0}}
     for ii in range(natoms):
         for jj in range(ii+1, natoms):
+            cutoff = cutoffs[atoms[ii].symbol][atoms[jj].symbol]
             if dm[ii][jj] < cutoff:
                 G.add_edge(ii, jj)
     return G
