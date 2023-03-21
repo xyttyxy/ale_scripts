@@ -813,6 +813,16 @@ def find_topo_ids(filename):
     return int(lines[1].split()[-3]), int(lines[1].split()[-2])
 
 
+def atoms_changed_topo(filename):
+    atoms_changed = []
+    with open(filename, 'r') as sortiefile:
+        for line in sortiefile:
+            if 'Topology has changed' in line and ' 0-->' not in line:
+                nextline = next(sortiefile, '')
+                atom_idx = int(nextline.split()[-1])-1
+                atoms_changed.append(atom_idx)
+    return atoms_changed
+                
 if __name__ == '__main__':    
     G = nx.Graph()
     H = nx.Graph()
