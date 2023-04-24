@@ -104,7 +104,7 @@ def get_dump_image_indices_segment(filename, chunk_start, chunk_end):
             # timestep is line after match
             m.readline()
             numatoms = int(m.readline().rstrip())
-
+ 
             # append byte index
             byte_indices = np.vstack((byte_indices, np.array([byte_idx, timestep, numatoms], dtype=np.uint64)))
             last_byte_idx = byte_idx+1 # to skip last found
@@ -419,14 +419,18 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
     columns = data.columns.to_list()
 
     # https://docs.lammps.org/units.html
-    assert lmp_units == 'real', f'units {units} not implemented'
-    
     # conversion factors from lammps to ase
     # ase use eV = 1, Angstrom = 1, amu = 1
     if lmp_units == 'real':
         conv_e = units.kcal/units.mol
         conv_t = units.fs
         conv_l = units.Angstrom
+    elif lmp_units == 'metal':
+        conv_e = units.eV
+        conv_t = units.fs * 1000
+        conv_l = units.Angstrom
+    else:
+        raise RuntimeError(f'units {lmp_units} not implemented')
 
     # test for cartesian or direct coordinates
     if all(val in columns for val in ['xs', 'ys', 'zs']):
@@ -470,8 +474,8 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
         if isinstance(log_read, list):
             log_read = log_read[-1]
 
-        columns_to_check = ['E_pair', 'TotEng'] # not fields in thermo command
-        
+        columns_to_check = ['E_pair', 'TotEng', 'PotEng'] # not fields in thermo command
+
         if not any(val in log_read.columns for val in columns_to_check):
             retval = 0.0
             warnings.warn('Energy not found in log, returning 0.0', RuntimeWarning)
@@ -503,22 +507,25 @@ def parse_single_struct(df_struct, read_forces=False, lmp_units='real', read_vel
             # divide because velocity is time^-1
             vel = data[['vx','vy','vz']].to_numpy(float) / conv_t
             if 'id' in columns:
-                vel = [v for _, v in sorted(atom_ids, vel)]
-            return at, vel
+                vel = [v for _, v in sorted(zip(atom_ids, vel))]
+            at.set_velocities(vel)
+            return at
         else:
             raise RuntimeError('Velocities not found in dump')
         
 
     return at
-        
-def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=None, order=True, atomsobj=Atoms, impact_type='O', return_all=False, read_forces = False, log_file=None):
+
+
+# df_struct, read_forces=False, lmp_units='real', read_velocities=False, log_file=None, impact_type = 'O'
+def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=None, **kwargs):
     """This is a wrapper around pymatgen generator, to get the list of atoms
     Note: on a very large dump file this will eat the RAM very quickly. Use with caution. """
     LD = parse_lammps_dumps(fileobj)
     if index:
         for a in LD: # grossly inefficient, but I want the last item and don't want to rewrite the iterator
             pass
-        at = parse_single_struct(a, read_forces=read_forces, log_file=log_file, impact_type=impact_type)
+        at = parse_single_struct(a, **kwargs)
         return at
     else:
         atoms_view = []
@@ -526,7 +533,7 @@ def read_lammps_dump_pymatgen(fileobj, every_n = 1, index=None, order=True, atom
         for a in LD:
             i = i + 1
             if i % every_n == 0:
-                at = parse_single_struct(a, read_forces=read_forces)
+                at = parse_single_struct(a, **kwargs)
                 atoms_view.append(at)
 
         return atoms_view

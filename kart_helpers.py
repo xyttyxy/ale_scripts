@@ -499,6 +499,7 @@ def mcs_xyt(g0, g1, center0, center1, rank):
     f1 = f'temp_g1_{identifier}.gfd'
     write_gfd_with_center(g0, f0, center0)
     write_gfd_with_center(g1, f1, center1)
+
     proc = subprocess.run([mcsxyt_solver, 
                            '--connected',
                            '-g', # gfd input format
@@ -777,6 +778,9 @@ def atoms2nx(atoms, cutoff_in=None):
     G.add_nodes_from(nodes)
     cutoffs = {'Cu': {'O': 2.3, 'Cu': 2.8},
                'O': {'Cu': 2.3, 'O': 2.0}}
+    pos = atoms.get_positions()
+    pos = {a.index: a.position for a in atoms}
+    nx.set_node_attributes(G, pos, 'pos')
     for ii in range(natoms):
         for jj in range(ii+1, natoms):
             cutoff = cutoffs[atoms[ii].symbol][atoms[jj].symbol]
