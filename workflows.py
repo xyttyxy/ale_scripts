@@ -1,13 +1,44 @@
 from ase.calculators.vasp import Vasp
+import shutil
+from ase.io import read, write
 
+def set_vasp_key(calc, key, value):
+    from ase.calculators.vasp.create_input import float_keys, exp_keys, string_keys, int_keys, bool_keys, list_int_keys, list_bool_keys, list_float_keys, special_keys, dict_keys
+
+    if key in float_keys:
+        calc.float_params[key] = value
+    elif key in exp_keys:
+        calc.exp_params[key] = value
+    elif key in string_keys:
+        calc.string_params[key] = value
+    elif key in int_keys:
+        calc.int_params[key] = value
+    elif key in bool_keys:
+        calc.bool_params[key] = value
+    elif key in list_int_keys:
+        calc.list_int_params[key] = value
+    elif key in list_bool_keys:
+        calc.list_bool_params[key] = value
+    elif key in list_float_keys:
+        calc.list_float_params[key] = value
+    elif key in list_float_keys:
+        calc.list_float_params[key] = value
+    elif key in special_keys:
+        calc.special_params[key] = value
+    elif key in dict_keys:
+        calc.dict_params[key] = value
+        
+    # some keys need special treatment
+    # including kpts, gamma, xc
+    if key in calc.input_params.keys():
+        calc.input_params[key] = value
+
+        
 def get_base_calc():
-    calc = Vasp(command=vasp_command,
-                # functional and basis set
+    calc = Vasp(# functional and basis set
                 encut=400,xc='pbe', 
                 # smearing near E_fermi
                 ismear=0,sigma=1e-2, 
-                # dipole correction
-                ldipol=True,idipol=3,dipol=com, 
                 # DFT+U
                 ldau=True,ldautype=2,ldaul=[2,0],ldauu=[7,0],ldauj=[0,0],lmaxmix=4,lasph=True, 
                 # SCF convergence
@@ -17,11 +48,9 @@ def get_base_calc():
                 # magnetization,magmom set in atoms object
                 ispin=2, 
                 # I/O
-                istart=1,lwave=False,lcharg=False,
+                istart=0,lwave=False,lcharg=False,
                 # kpoints
-                gamma=False,
-                # logistics
-                label=atoms.info['label'])
+                gamma=False)
     
     return calc
 
@@ -39,6 +68,7 @@ def geo_opt(atoms, mode="vasp", opt_levels=None, fmax=0.02):
 
     levels = opt_levels.keys()
     if mode == 'vasp':
+        # BUG: POSCAR format loses magmom information
         write("CONTCAR", atoms)
         for level in levels:
             level_settings = opt_levels[level]
