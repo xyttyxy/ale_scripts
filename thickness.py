@@ -68,20 +68,32 @@ def get_all_thicknesses(filename, byteidx):
     return np.vstack((byteidx[:, 1], thicknesses[1:], num_o[1:]))
     
 
-def get_all_thicknesses_parallel(filename, byteidx, ncore=None, batch=None):
-
-
-    def foo(s):
-        atoms = read_dump(filename, s)
+def get_all_thicknesses_parallel(fname_or_traj, byteidx=None, ncore=None, batch=None):
+    def foo_byte(s):
+        atoms = read_dump(fname, s)
         t, no = get_thickness(atoms, 4)
         return t, no
+
+    def foo(atoms):
+        t, no = get_thickness(atoms, 4)
+        return t, no
+    
     if ncore:
         cpus = ncore
     else:
         cpus = os.cpu_count()
+
+    if byteidx and isinstance(fname_or_traj, str):
+        fname = fname_or_traj
+        thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayedf(foo_byte)(s) for s in tqdm(byteidx[batch[0]:batch[1], 1])))
+        return np.vstack((byteidx[batch[0]:batch[1], 1], thickness, num_o))
     
-    thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(s) for s in tqdm(byteidx[batch[0]:batch[1], 1])))
-    return np.vstack((byteidx[batch[0]:batch[1], 1], thickness, num_o))
+    elif isinstance(fname_or_traj, list):
+        traj = fname_or_traj
+        thickness, num_o = zip(*Parallel(n_jobs=cpus)(delayed(foo)(atoms) for atoms in tqdm(traj)))
+        return thickness, num_o
+    else:
+        raise RuntimeError('Not supported')
 
         
 def get_thickness(atoms, method=1, debug=False, raw_coords=False):
@@ -103,7 +115,11 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
     z = atoms.get_positions()[:, 2]
     is_o = atoms.symbols == 'O'
 
-    min_O = min(z[is_o])
+    try:
+        min_O = min(z[is_o])
+    except ValueError:
+        return 0, 0
+
     # method 1
     # highest cu z coords
     high_Cu = np.sort(z[~is_o])[-100:]
@@ -208,10 +224,14 @@ def get_thickness(atoms, method=1, debug=False, raw_coords=False):
         atoms_o = atoms[np.array(atoms.get_chemical_symbols()) == 'O']
         write(filename, atoms_o, format='lammps-data')
         u = mda.Universe(filename, format='DATA', atom_style='id type x y z')
-        inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3, normal='z')
-        bot_idx = np.array([int(elm) for elm in inter.layers[1][0].elements]) - 1
         num_O = len(atoms_o)
-        if len(bot_idx) != 0 and len(bot_idx) != 0:
+        try:
+            inter = pytim.ITIM(u, max_layers=1, molecular=False, cluster_cut=4, alpha=3, normal='z')
+            bot_idx = np.array([int(elm) for elm in inter.layers[1][0].elements]) - 1
+        except ValueError:
+            bot_idx = []
+            
+        if len(bot_idx) != 0:
             bot_z = np.mean(atoms_o.get_positions()[bot_idx, 2])
             os.remove(filename)
             del atoms, atoms_o, u, inter

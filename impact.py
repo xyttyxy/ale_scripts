@@ -249,4 +249,25 @@ def get_snap_imgs(steps_ctrs, steps_brkt):
         im1 = im.crop((left, top, right, bottom))
         im1.save(im_filename)
 
+def find_cluster(atoms):
+    from ase.neighborlist import NeighborList
+    cutoffs = [0.1] * len(atoms)
+    nl = NeighborList(cutoffs, self_interaction=False, bothways=False)
+    nl.update(atoms)
+    conn_mat = nl.get_connectivity_matrix(sparse=False)
+    molecules = np.argwhere(conn_mat)
+    from ase.atoms import Atoms
+    markers = Atoms([atoms[m] for m in molecules.flatten()], cell=atoms.cell, pbc=True)
+    atoms_copy = atoms.copy()
+
+    del atoms_copy[[molecules[0] for molecule in molecules]]
+
+    cutoffs = [0.6 if at.symbol == 'O' else 0 for at in atoms_copy]
+    nl = NeighborList(cutoffs, self_interaction=False, bothways=False)
+    nl.update(atoms_copy)
+    conn_mat = nl.get_connectivity_matrix(sparse=False)
+    molecules = np.argwhere(conn_mat)
+    markers = Atoms([atoms_copy[m] for m in molecules.flatten()], cell=atoms_copy.cell, pbc=True)
+    return markers
+
 
